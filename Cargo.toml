@@ -1,0 +1,18 @@
+[package]
+name = "quic-n-dirty"
+version = "0.1.0"
+description = "A quick and dirty QUIC interface for node.js, based on CloudFlare's Quiche. Not ideal for super long term since Node.js' official support is coming soon(-ish?), but should be good enough for initial deployments."
+authors = ["Rafael Costa <rafael@rafaelcosta.me>"]
+license = "MIT"
+edition = "2021"
+exclude = ["index.node"]
+
+[lib]
+crate-type = ["cdylib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+neon = "1"
+rand = "0.8.5"
+quiche = "0.20.0"
