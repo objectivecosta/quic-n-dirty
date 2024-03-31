@@ -2,7 +2,7 @@
 
 **quic-n-dirty:** A quick and dirty QUIC interface for node.js, based on CloudFlare's Quiche. Not ideal for super long term since Node.js' official support is coming soon(-ish?), but should be good enough for initial deployments.
 
-This project was bootstrapped by [create-neon](https://www.npmjs.com/package/create-neon).
+**Note about TLS:** the certificate here is imported from CloudFlare's `quiche` just for testing. DO NOT USE IN PRODUCTION.
 
 ## Installing quic-n-dirty
 
