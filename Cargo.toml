@@ -16,3 +16,4 @@ crate-type = ["cdylib"]
 neon = "1"
 rand = "0.8.5"
 quiche = "0.20.0"
+ring = "0.17.8"

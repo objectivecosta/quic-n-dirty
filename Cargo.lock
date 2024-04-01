@@ -152,6 +152,7 @@ dependencies = [
  "neon",
  "quiche",
  "rand",
+ "ring",
 ]
 
 [[package]]
