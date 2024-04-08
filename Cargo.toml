@@ -15,5 +15,6 @@ crate-type = ["cdylib"]
 [dependencies]
 neon = "1"
 rand = "0.8.5"
+mio = { version = "0.8", features = ["net", "os-poll"] }
 quiche = "0.20.0"
 ring = "0.17.8"
