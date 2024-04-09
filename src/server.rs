@@ -7,7 +7,7 @@ use std::{
 
 use mio::net::UdpSocket;
 use neon::types::JsError;
-use quiche::ConnectionId;
+use quiche::{ConnectionId, Type};
 use ring::rand::{SecureRandom, SystemRandom};
 
 const MAX_BUF_SIZE: usize = 65507;
@@ -136,7 +136,7 @@ impl QUICServerImpl {
         config
             .load_cert_chain_from_pem_file("/Users/rafaelcosta/Developer/quic-n-dirty/cert.crt")
             .map_err(|e| CustomError::new(&e.to_string()))?;
-            
+
         let _ = config.set_application_protos(&[b"qnd"]);
 
         config.set_max_idle_timeout(5000);
@@ -312,7 +312,8 @@ impl QUICServerImpl {
 
                     #[allow(unused_mut)]
                     let mut conn =
-                        quiche::accept(&scid, odcid.as_ref(), local_addr, from, &mut config).unwrap();
+                        quiche::accept(&scid, odcid.as_ref(), local_addr, from, &mut config)
+                            .unwrap();
 
                     let client_id = next_client_id;
 
@@ -343,7 +344,10 @@ impl QUICServerImpl {
                     found
                 };
 
-                let recv_info = quiche::RecvInfo { to: local_addr, from };
+                let recv_info = quiche::RecvInfo {
+                    to: local_addr,
+                    from,
+                };
 
                 // Process potentially coalesced packets.
                 let read = match client.conn.recv(pkt_buf, recv_info) {
@@ -364,10 +368,37 @@ impl QUICServerImpl {
                 if !client.app_proto_selected
                     && (client.conn.is_in_early_data() || client.conn.is_established())
                 {
-                    println!("Client Protocol count: {}", client.conn.application_proto().len());
+                    println!(
+                        "Client Protocol count: {}",
+                        client.conn.application_proto().len()
+                    );
+                    client.app_proto_selected = client.conn.application_proto() == b"qnd";
                     client.max_datagram_size = client.conn.max_send_udp_payload_size();
                 }
 
+                if client.app_proto_selected && header.ty == Type::Short {
+                    
+                }
+
+
+                if client.conn.is_established() {
+
+                    
+                    // Iterate over readable streams.
+                    for stream_id in client.conn.readable() {
+
+                        let mut stream_buf = [0; MAX_BUF_SIZE];
+
+                        // Stream is readable, read until there's no more data.
+                        while let Ok((read, fin)) = client.conn.stream_recv(stream_id, &mut stream_buf) {
+                            println!("Got {} bytes on stream {}", read, stream_id);
+                            let content = stream_buf[..read].to_owned();
+                            println!("Content: {}", String::from_utf8_lossy(content.as_slice()));
+                        }
+                    }
+                }
+
+                // TODO(objectivecosta): Is this needed?
                 self.handle_path_events(client);
 
                 // See whether source Connection IDs have been retired.
@@ -441,7 +472,7 @@ impl QUICServerImpl {
                     break;
                 }
 
-                if let Err(e) = &socket.send_to(&out[..total_write], dst_info.unwrap().from) {
+                if let Err(e) = &socket.send_to(&out[..total_write], dst_info.unwrap().to) {
                     if e.kind() == std::io::ErrorKind::WouldBlock {
                         println!("send() would block");
                         break;
