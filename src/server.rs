@@ -382,8 +382,6 @@ impl QUICServerImpl {
 
 
                 if client.conn.is_established() {
-
-                    
                     // Iterate over readable streams.
                     for stream_id in client.conn.readable() {
 
