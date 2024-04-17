@@ -391,7 +391,16 @@ impl QUICServerImpl {
                         while let Ok((read, fin)) = client.conn.stream_recv(stream_id, &mut stream_buf) {
                             println!("Got {} bytes on stream {}", read, stream_id);
                             let content = stream_buf[..read].to_owned();
+                            let content_string = String::from_utf8_lossy(content.as_slice());
                             println!("Content: {}", String::from_utf8_lossy(content.as_slice()));
+                            let return_value = format!("Return: {}", content_string.into_owned());
+                            let return_bytes = return_value.as_bytes();
+                            let write_result = client.conn.stream_send(stream_id, return_bytes, false);
+                            
+                            match write_result {
+                                Ok(size) => println!("Wrote in return: {}", size),
+                                Err(error) => println!("Error writing in return: {}", error.to_string()),
+                            }
                         }
                     }
                 }
