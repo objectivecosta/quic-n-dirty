@@ -3,12 +3,15 @@ use std::{
     collections::HashMap,
     error::Error,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::mpsc::{Receiver, Sender},
 };
 
 use mio::net::UdpSocket;
-use neon::types::JsError;
-use quiche::{ConnectionId, Type};
+use quiche::ConnectionId;
+use quiche::Type;
 use ring::rand::{SecureRandom, SystemRandom};
+
+use crate::Message;
 
 const MAX_BUF_SIZE: usize = 65507;
 const MAX_DATAGRAM_SIZE: usize = 1350;
@@ -18,6 +21,7 @@ pub type ClientId = u64;
 pub struct Client {
     pub conn: quiche::Connection,
     pub client_id: ClientId,
+    pub are_channels_open: bool,
     pub app_proto_selected: bool,
     pub max_datagram_size: usize,
     pub loss_rate: f64,
@@ -28,7 +32,7 @@ pub type ClientIdMap = HashMap<ConnectionId<'static>, ClientId>;
 pub type ClientMap = HashMap<ClientId, Client>;
 
 pub trait QUICServer {
-    fn listen(&self /* TODO: Add parameters */);
+    fn listen(&self, output: Sender<Message>, input: Receiver<Message> /* TODO: Add parameters */);
 }
 
 pub struct QUICServerImpl {}
@@ -107,7 +111,7 @@ impl fmt::Display for CustomError {
 }
 
 impl QUICServerImpl {
-    fn _listen(&self) -> Result<(), CustomError> {
+    fn _listen(&self, output: Sender<Message>, input: Receiver<Message>) -> Result<(), CustomError> {
         let mut buf = [0; MAX_BUF_SIZE];
         let mut out = [0; MAX_BUF_SIZE];
         let mut pacing = false;
@@ -128,8 +132,6 @@ impl QUICServerImpl {
         let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)
             .map_err(|e| CustomError::new(&e.to_string()))?;
 
-        let conn_args = CommonArgs::default();
-
         config
             .load_priv_key_from_pem_file("/Users/rafaelcosta/Developer/quic-n-dirty/cert.key")
             .map_err(|e| CustomError::new(&e.to_string()))?;
@@ -139,7 +141,7 @@ impl QUICServerImpl {
 
         let _ = config.set_application_protos(&[b"qnd"]);
 
-        config.set_max_idle_timeout(5000);
+        config.set_max_idle_timeout(30000);
         config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_initial_max_data(10_000_000);
@@ -321,6 +323,7 @@ impl QUICServerImpl {
                         conn,
                         client_id,
                         app_proto_selected: false,
+                        are_channels_open: false,
                         max_datagram_size: MAX_DATAGRAM_SIZE,
                         loss_rate: 0.0,
                         max_send_burst: MAX_BUF_SIZE,
@@ -376,32 +379,69 @@ impl QUICServerImpl {
                     client.max_datagram_size = client.conn.max_send_udp_payload_size();
                 }
 
-                if client.app_proto_selected && header.ty == Type::Short {
-                    
-                }
-
+                if client.app_proto_selected && header.ty == Type::Short {}
 
                 if client.conn.is_established() {
                     // Iterate over readable streams.
                     for stream_id in client.conn.readable() {
-
                         let mut stream_buf = [0; MAX_BUF_SIZE];
 
                         // Stream is readable, read until there's no more data.
-                        while let Ok((read, fin)) = client.conn.stream_recv(stream_id, &mut stream_buf) {
+                        while let Ok((read, fin)) =
+                            client.conn.stream_recv(stream_id, &mut stream_buf)
+                        {
                             println!("Got {} bytes on stream {}", read, stream_id);
+
+                            let stream_identifier = stream_id >> 2;
+
                             let content = stream_buf[..read].to_owned();
                             let content_string = String::from_utf8_lossy(content.as_slice());
-                            println!("Content: {}", String::from_utf8_lossy(content.as_slice()));
-                            let return_value = format!("Return: {}", content_string.into_owned());
-                            let return_bytes = return_value.as_bytes();
-                            let write_result = client.conn.stream_send(stream_id, return_bytes, false);
-                            
-                            match write_result {
-                                Ok(size) => println!("Wrote in return: {}", size),
-                                Err(error) => println!("Error writing in return: {}", error.to_string()),
+
+                            if stream_identifier > u32::MAX.into() {
+                                panic!("Stream Identifier is too large")
+                            }
+
+                            let _ = output.send(Message {
+                                stream_identifier: stream_identifier as u32,
+                                message: content_string.to_string(),
+                            });
+
+                            println!("Content: {}", String::from_utf8_lossy(content.as_slice()));                        
+                        }
+                    }
+
+                    if !client.are_channels_open {
+                        for i in 1..21 {
+
+                            // All streams are bidirectional
+                            // Server streams have the least significant bit set to 1!
+                            let stream_id = (i << 2) | 0b1;
+                            let buffer = format!("OpenStream{}", i);
+                            println!("Opening channel: {}/{}", i, buffer);
+                            let buf = buffer.as_bytes();
+                            let open_stream = client.conn.stream_send(stream_id, buf, false);
+
+                            match open_stream {
+                                Ok(size) => println!("Opened stream {} with size {}", i, size),
+                                Err(error) => {
+                                    println!("Error opening stream {} with error {}", i, error)
+                                }
                             }
                         }
+
+                        client.are_channels_open = true;
+                    }
+                }
+
+                if client.are_channels_open {
+                    match input.try_recv() {
+                        Ok(data) => {
+                            let stream_id: u64 = ((data.stream_identifier << 2) | 0b1).into();
+                            let buffer = data.message;
+                            let buf = buffer.as_bytes();
+                            client.conn.stream_send(stream_id, buf, false);
+                        },
+                        Err(error) => println!("Would block with input: {}", error)
                     }
                 }
 
@@ -660,8 +700,8 @@ impl QUICServerImpl {
 }
 
 impl QUICServer for QUICServerImpl {
-    fn listen(&self /* TODO: Add parameters */) {
-        match self._listen() {
+    fn listen(&self, output: Sender<Message>, input: Receiver<Message> /* TODO: Add parameters */) {
+        match self._listen(output, input) {
             Err(e) => {
                 println!("Listen returned error: {}", e.message)
             }
